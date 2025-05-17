@@ -1,0 +1,71 @@
+FROM nixos/nix:latest
+
+####################### Install dependencies #######################
+
+RUN echo 2023-11-27
+RUN mkdir -p /etc/nix && echo 'sandbox = false' > /etc/nix/nix.conf
+RUN nix-channel --add https://nixos.org/channels/nixos-23.11 nixpkgs
+RUN nix-channel --update
+RUN nix-env -iA nixpkgs.bash nixpkgs.stack nixpkgs.coreutils nixpkgs.lessc nixpkgs.findutils nixpkgs.redis nixpkgs.nodejs
+
+####################### Set locale #######################
+
+ENV \
+  LANG=en_US.UTF-8 \
+  LC_ALL=en_US.UTF-8 \
+  LC_CTYPE=en_US.UTF-8
+
+####################### Configure the project #######################
+
+# Copy project configuration files
+COPY stack.yaml /lojbanios/stack.yaml
+COPY lojbanios.cabal /lojbanios/lojbanios.cabal
+
+# Copy libraries
+COPY haskell/libs /lojbanios/haskell/libs
+
+# Setup GHC
+RUN cd /lojbanios && stack setup
+
+# Install dependencies
+RUN cd /lojbanios && stack install --only-dependencies
+
+# Copy source code
+COPY haskell /lojbanios/haskell
+COPY LICENSE /lojbanios/LICENSE
+
+# Copy resources
+COPY resources /lojbanios/resources
+
+# Compile source code and documentation
+RUN cd /lojbanios && stack haddock --no-haddock-deps --haddock-internal
+
+# Move documentation
+RUN mv /lojbanios/.stack-work/install/x86_64-linux-nix/*/*/doc /lojbanios/documentation
+
+# Copy audio files
+COPY static/audio /lojbanios/static/audio
+
+# Copy image files
+COPY static/images /lojbanios/static/images
+
+# Copy pwa files
+COPY static/pwa /lojbanios/static/pwa
+
+# Copy assets
+COPY assets /lojbanios/assets
+
+# Copy buildscripts
+COPY buildscripts /lojbanios/buildscripts
+
+# Generate stylesheet files
+RUN cd /lojbanios && LOJBANIOS_BYPASS_NIX=true ./buildscripts/make-css.sh
+
+# Generate javascript files
+RUN cd /lojbanios && LOJBANIOS_BYPASS_NIX=true ./buildscripts/make-javascript.sh
+
+####################### Expose ports #######################
+EXPOSE 8000/tcp
+
+####################### Default command #######################
+CMD echo "hosts: files dns" > /etc/nsswitch.conf && (nix-shell -p glibcLocales --run "redis-server" >/dev/null 2>/dev/null &) && cd /lojbanios && sleep 3 && .stack-work/install/x86_64-linux-nix/*/*/bin/server
